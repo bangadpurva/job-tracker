@@ -1,0 +1,205 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard — JobTracker{% endblock %}
+
+{% block content %}
+
+{# ── Header ── #}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <h4 class="fw-bold mb-0">My Applications</h4>
+  <form action="{{ url_for('agent_scan') }}" method="post" id="scanForm">
+    <button type="submit" class="btn btn-agent px-4" id="scanBtn">
+      <i class="bi bi-robot me-2"></i>Scan Emails with AI
+    </button>
+  </form>
+</div>
+
+{# ── Stats row ── #}
+<div class="row g-3 mb-4">
+  {% set stat_items = [
+    ('total',                stats.total,                'Total',      'bi-stack',            '#1e293b'),
+    ('applied',              stats.applied,              'Applied',    'bi-send',             '#1d4ed8'),
+    ('in_process',           stats.in_process,           'In Process', 'bi-arrow-repeat',     '#b45309'),
+    ('interview_scheduled',  stats.interview_scheduled,  'Interviews', 'bi-camera-video',     '#6d28d9'),
+    ('rejected',             stats.rejected,             'Rejected',   'bi-x-circle',         '#b91c1c'),
+    ('offer',                stats.offer,                'Offers',     'bi-trophy',           '#15803d'),
+  ] %}
+  {% for key, val, label, icon, color in stat_items %}
+  <div class="col-6 col-md-4 col-lg-2">
+    <a href="{{ url_for('dashboard', status=key if key != 'total' else 'all') }}"
+       class="card stat-card p-3 text-decoration-none text-center d-block bg-white">
+      <i class="bi {{ icon }} mb-1" style="font-size:1.4rem;color:{{ color }}"></i>
+      <div class="fw-bold fs-4" style="color:{{ color }}">{{ val }}</div>
+      <div class="text-muted small">{{ label }}</div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+
+{# ── Filter pills ── #}
+<div class="d-flex gap-2 flex-wrap mb-4">
+  {% for key, label in [('all','All'), ('applied','Applied'), ('in_process','In Process'),
+                         ('interview_scheduled','Interview'), ('rejected','Rejected'), ('offer','Offer')] %}
+  <a href="{{ url_for('dashboard', status=key) }}"
+     class="btn btn-sm btn-outline-secondary rounded-pill filter-pill {{ 'active' if status_filter == key }}">
+    {{ label }}
+  </a>
+  {% endfor %}
+</div>
+
+{# ── Application cards ── #}
+{% if applications %}
+<div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
+  {% for app in applications %}
+  <div class="col">
+    <div class="card app-card h-100 p-3">
+      <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+        <div class="overflow-hidden">
+          <div class="fw-bold text-truncate" title="{{ app.company }}">{{ app.company }}</div>
+          <div class="text-muted small text-truncate" title="{{ app.role or '' }}">{{ app.role or '—' }}</div>
+        </div>
+        <span class="badge-status s-{{ app.status }} flex-shrink-0">
+          {% if app.status == 'applied' %}Applied
+          {% elif app.status == 'in_process' %}In Process
+          {% elif app.status == 'interview_scheduled' %}Interview
+          {% elif app.status == 'rejected' %}Rejected
+          {% elif app.status == 'offer' %}Offer!
+          {% endif %}
+        </span>
+      </div>
+
+      {% if app.applied_date %}
+      <div class="text-muted small mb-1">
+        <i class="bi bi-calendar3 me-1"></i>Applied {{ app.applied_date.strftime('%b %d, %Y') }}
+      </div>
+      {% endif %}
+
+      {% if app.interview_date %}
+      <div class="small mb-1" style="color:#6d28d9">
+        <i class="bi bi-camera-video me-1"></i>Interview {{ app.interview_date.strftime('%b %d, %Y') }}
+      </div>
+      {% endif %}
+
+      {% if app.notes %}
+      <div class="text-muted small mb-2 fst-italic text-truncate" title="{{ app.notes }}">
+        {{ app.notes }}
+      </div>
+      {% endif %}
+
+      <div class="mt-auto pt-2 d-flex gap-2">
+        <button class="btn btn-sm btn-outline-secondary flex-grow-1"
+                data-edit-id="{{ app.id }}">
+          <i class="bi bi-pencil me-1"></i>Edit
+        </button>
+        <button class="btn btn-sm btn-outline-danger"
+                data-delete-id="{{ app.id }}"
+                title="Delete">
+          <i class="bi bi-trash"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+<div class="text-center py-5">
+  <i class="bi bi-inbox text-muted" style="font-size:3.5rem"></i>
+  <h5 class="text-muted mt-3 fw-normal">No applications here yet</h5>
+  <p class="text-muted small">Click <strong>Scan Emails with AI</strong> to automatically find job applications in your Gmail.</p>
+</div>
+{% endif %}
+
+{# ── Edit Modal ── #}
+<div class="modal fade" id="editModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content rounded-4 border-0">
+      <div class="modal-header border-0 pb-0">
+        <h5 class="modal-title fw-bold">Update Application</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-1 text-muted small" id="modalSubtitle"></div>
+        <form id="editForm">
+          <input type="hidden" id="editId">
+          <div class="mb-3">
+            <label class="form-label fw-semibold small">Status</label>
+            <select class="form-select" id="editStatus">
+              <option value="applied">Applied</option>
+              <option value="in_process">In Process</option>
+              <option value="interview_scheduled">Interview Scheduled</option>
+              <option value="rejected">Rejected</option>
+              <option value="offer">Offer</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold small">Interview Date</label>
+            <input type="date" class="form-control" id="editInterviewDate">
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold small">Notes</label>
+            <textarea class="form-control" id="editNotes" rows="3" placeholder="Add any notes..."></textarea>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer border-0 pt-0">
+        <button class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="saveEditBtn">Save Changes</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const editModal = new bootstrap.Modal(document.getElementById('editModal'));
+
+// Open edit modal
+document.querySelectorAll('[data-edit-id]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const id = btn.dataset.editId;
+    const resp = await fetch(`/applications/${id}`);
+    const data = await resp.json();
+
+    document.getElementById('editId').value = id;
+    document.getElementById('editStatus').value = data.status;
+    document.getElementById('editInterviewDate').value = data.interview_date || '';
+    document.getElementById('editNotes').value = data.notes || '';
+    document.getElementById('modalSubtitle').textContent = `${data.company}  ·  ${data.role || ''}`;
+    editModal.show();
+  });
+});
+
+// Save edit
+document.getElementById('saveEditBtn').addEventListener('click', async () => {
+  const id = document.getElementById('editId').value;
+  const body = new FormData();
+  body.append('status', document.getElementById('editStatus').value);
+  body.append('interview_date', document.getElementById('editInterviewDate').value);
+  body.append('notes', document.getElementById('editNotes').value);
+
+  const resp = await fetch(`/applications/${id}/update`, { method: 'POST', body });
+  const data = await resp.json();
+  if (data.success) { editModal.hide(); location.reload(); }
+});
+
+// Delete
+document.querySelectorAll('[data-delete-id]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    if (!confirm('Delete this application?')) return;
+    const id = btn.dataset.deleteId;
+    const resp = await fetch(`/applications/${id}/delete`, { method: 'POST' });
+    const data = await resp.json();
+    if (data.success) location.reload();
+  });
+});
+
+// Scan button loading state
+document.getElementById('scanForm').addEventListener('submit', () => {
+  const btn = document.getElementById('scanBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Scanning…';
+});
+</script>
+{% endblock %}
