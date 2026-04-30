@@ -1,5 +1,4 @@
 import os
-import re
 import json
 import base64
 from datetime import datetime
@@ -90,7 +89,65 @@ def fetch_job_emails(service, max_results=50):
     return emails
 
 
+# Tool definition for Claude to call when it finds a job-related email
+_SAVE_APPLICATION_TOOL = {
+    'name': 'save_job_application',
+    'description': (
+        'Save a job application extracted from an email. Only call this for emails '
+        'that are clearly about a job application, interview, offer, or rejection.'
+    ),
+    'input_schema': {
+        'type': 'object',
+        'properties': {
+            'gmail_message_id': {
+                'type': 'string',
+                'description': 'The exact email ID from the EMAIL block header',
+            },
+            'company': {
+                'type': 'string',
+                'description': 'Name of the company',
+            },
+            'role': {
+                'type': 'string',
+                'description': 'Job title or role name',
+            },
+            'status': {
+                'type': 'string',
+                'enum': ['applied', 'in_process', 'interview_scheduled', 'rejected', 'offer'],
+                'description': (
+                    'applied=submitted/received, in_process=recruiter outreach or screening, '
+                    'interview_scheduled=interview confirmed with date/time, '
+                    'rejected=rejection notice, offer=job offer received'
+                ),
+            },
+            'applied_date': {
+                'type': 'string',
+                'description': 'Date in YYYY-MM-DD format from the email date header',
+            },
+            'interview_date': {
+                'type': 'string',
+                'description': 'Date in YYYY-MM-DD format if an interview is scheduled, else omit',
+            },
+            'notes': {
+                'type': 'string',
+                'description': 'One-sentence summary of the email',
+            },
+            'skills': {
+                'type': 'array',
+                'items': {'type': 'string'},
+                'description': (
+                    'Technical skills and tools mentioned in the job description or email '
+                    '(e.g. Python, SQL, React, AWS, Machine Learning). Max 8 items.'
+                ),
+            },
+        },
+        'required': ['gmail_message_id', 'company', 'status'],
+    },
+}
+
+
 def analyze_emails_with_claude(emails):
+    """Use Claude tool use to extract structured job application data from emails."""
     if not emails:
         return []
 
@@ -104,49 +161,36 @@ def analyze_emails_with_claude(emails):
             f"Subject: {email['subject']}\n"
             f"From: {email['from']}\n"
             f"Date: {email['date']}\n"
-            f"Body: {email['body'][:500]}\n"
+            f"Body: {email['body'][:600]}\n"
             f"---"
         )
 
     prompt = (
-        "Analyze these emails and identify job application related ones.\n\n"
+        "Analyze the following emails. For each email that is related to a job application, "
+        "interview, offer, or rejection, call the save_job_application tool with the extracted data. "
+        "Skip emails that are not job-related (newsletters, receipts, etc.).\n\n"
         + "\n".join(email_blocks)
-        + "\n\nReturn a JSON array. Each element must have:\n"
-        '- "gmail_message_id": the ID from the EMAIL block (must match exactly)\n'
-        '- "is_job_related": true if this is about a job application, interview, offer, or rejection\n'
-        '- "company": company name string, or null\n'
-        '- "role": job title string, or null\n'
-        '- "applied_date": "YYYY-MM-DD" from the email date, or null\n'
-        '- "status": one of "applied", "in_process", "interview_scheduled", "rejected", "offer"\n'
-        '  * applied = application submitted/received\n'
-        '  * in_process = recruiter outreach, screening, under review\n'
-        '  * interview_scheduled = interview confirmed with date/time\n'
-        '  * rejected = rejection notice\n'
-        '  * offer = job offer received\n'
-        '- "interview_date": "YYYY-MM-DD" if an interview is scheduled, else null\n'
-        '- "notes": one-sentence summary\n\n'
-        'Include ALL emails in the output, even non-job-related ones (set is_job_related=false for those).\n'
-        'Return ONLY valid JSON array, no markdown, no explanation.'
     )
 
     message = client.messages.create(
         model='claude-haiku-4-5-20251001',
         max_tokens=4096,
+        tools=[_SAVE_APPLICATION_TOOL],
         messages=[{'role': 'user', 'content': prompt}],
     )
 
-    text = message.content[0].text.strip()
-    json_match = re.search(r'\[.*\]', text, re.DOTALL)
-    if json_match:
-        return json.loads(json_match.group())
-    return []
+    results = []
+    for block in message.content:
+        if block.type == 'tool_use' and block.name == 'save_job_application':
+            results.append(block.input)
+
+    return results
 
 
 def upsert_applications(user_id, claude_results, email_map):
+    """Write Claude tool call results into the database."""
     count = 0
     for result in claude_results:
-        if not result.get('is_job_related'):
-            continue
         company = result.get('company')
         if not company:
             continue
@@ -169,6 +213,7 @@ def upsert_applications(user_id, claude_results, email_map):
                 pass
 
         new_status = result.get('status', 'applied')
+        skills_json = json.dumps(result.get('skills') or [])
 
         existing = None
         if gmail_id:
@@ -183,6 +228,8 @@ def upsert_applications(user_id, claude_results, email_map):
                     existing.status = new_status
             if interview_date:
                 existing.interview_date = interview_date
+            if result.get('skills'):
+                existing.skills = skills_json
             existing.updated_at = datetime.utcnow()
             db.session.commit()
         else:
@@ -196,6 +243,7 @@ def upsert_applications(user_id, claude_results, email_map):
                 interview_date=interview_date,
                 notes=result.get('notes'),
                 raw_email_snippet=email_data.get('snippet', ''),
+                skills=skills_json,
             )
             db.session.add(app)
             db.session.commit()

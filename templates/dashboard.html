@@ -85,6 +85,20 @@
       </div>
       {% endif %}
 
+      {% if app.skills %}
+      {% set skill_list = app.skills | from_json %}
+      {% if skill_list %}
+      <div class="d-flex flex-wrap gap-1 mb-2">
+        {% for skill in skill_list[:4] %}
+        <span class="badge rounded-pill" style="background:#f1f5f9;color:#475569;font-weight:500;font-size:.68rem">{{ skill }}</span>
+        {% endfor %}
+        {% if skill_list|length > 4 %}
+        <span class="badge rounded-pill" style="background:#f1f5f9;color:#94a3b8;font-size:.68rem">+{{ skill_list|length - 4 }}</span>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% endif %}
+
       <div class="mt-auto pt-2 d-flex gap-2">
         <button class="btn btn-sm btn-outline-secondary flex-grow-1"
                 data-edit-id="{{ app.id }}">

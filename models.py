@@ -38,6 +38,7 @@ class JobApplication(db.Model):
     interview_date = db.Column(db.Date)
     notes = db.Column(db.Text)
     raw_email_snippet = db.Column(db.Text)
+    skills = db.Column(db.Text)  # JSON array stored as string, e.g. '["Python","SQL"]'
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
