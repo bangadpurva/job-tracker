@@ -1,0 +1,194 @@
+{% extends 'base.html' %}
+{% block title %}Analytics — JobTracker{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="fw-bold mb-0">Analytics</h4>
+  <a href="{{ url_for('dashboard') }}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Back to Dashboard
+  </a>
+</div>
+
+{# ── Conversion funnel KPI row ── #}
+<div class="row g-3 mb-4" id="kpiRow">
+  <div class="col-6 col-md-3">
+    <div class="card p-3 text-center border-0 rounded-4 bg-white" style="box-shadow:0 1px 4px rgba(0,0,0,.08)">
+      <div class="text-muted small mb-1">Total Applied</div>
+      <div class="fw-bold fs-3" id="kpiTotal">—</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 text-center border-0 rounded-4 bg-white" style="box-shadow:0 1px 4px rgba(0,0,0,.08)">
+      <div class="text-muted small mb-1">Applied → Process</div>
+      <div class="fw-bold fs-3 text-warning" id="kpiToProcess">—</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 text-center border-0 rounded-4 bg-white" style="box-shadow:0 1px 4px rgba(0,0,0,.08)">
+      <div class="text-muted small mb-1">Process → Interview</div>
+      <div class="fw-bold fs-3 text-purple" id="kpiToInterview" style="color:#6d28d9">—</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card p-3 text-center border-0 rounded-4 bg-white" style="box-shadow:0 1px 4px rgba(0,0,0,.08)">
+      <div class="text-muted small mb-1">Interview → Offer</div>
+      <div class="fw-bold fs-3 text-success" id="kpiToOffer">—</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4 mb-4">
+  {# ── Pipeline funnel ── #}
+  <div class="col-12 col-lg-5">
+    <div class="card border-0 rounded-4 bg-white p-4" style="box-shadow:0 1px 4px rgba(0,0,0,.08)">
+      <h6 class="fw-semibold mb-3">Application Pipeline</h6>
+      <canvas id="funnelChart" height="220"></canvas>
+    </div>
+  </div>
+
+  {# ── Applications over time ── #}
+  <div class="col-12 col-lg-7">
+    <div class="card border-0 rounded-4 bg-white p-4" style="box-shadow:0 1px 4px rgba(0,0,0,.08)">
+      <h6 class="fw-semibold mb-3">Applications Over Time</h6>
+      <canvas id="timelineChart" height="220"></canvas>
+    </div>
+  </div>
+</div>
+
+{# ── Top skills ── #}
+<div class="row g-4">
+  <div class="col-12">
+    <div class="card border-0 rounded-4 bg-white p-4" style="box-shadow:0 1px 4px rgba(0,0,0,.08)">
+      <h6 class="fw-semibold mb-3">Top Skills Across Applications</h6>
+      <div id="noSkills" class="text-muted small d-none">No skills data yet — scan emails with AI to extract skills from job descriptions.</div>
+      <canvas id="skillsChart" height="120"></canvas>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<script>
+const STATUS_COLORS = {
+  applied:              { bg: '#dbeafe', border: '#1d4ed8' },
+  in_process:           { bg: '#fef3c7', border: '#b45309' },
+  interview_scheduled:  { bg: '#ede9fe', border: '#6d28d9' },
+  rejected:             { bg: '#fee2e2', border: '#b91c1c' },
+  offer:                { bg: '#dcfce7', border: '#15803d' },
+};
+
+const STATUS_LABELS = {
+  applied: 'Applied',
+  in_process: 'In Process',
+  interview_scheduled: 'Interview',
+  rejected: 'Rejected',
+  offer: 'Offer',
+};
+
+Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
+
+async function loadAnalytics() {
+  const res = await fetch('/analytics/data');
+  const data = await res.json();
+
+  // KPI row
+  document.getElementById('kpiTotal').textContent = data.total;
+  document.getElementById('kpiToProcess').textContent = data.conversion.applied_to_process + '%';
+  document.getElementById('kpiToInterview').textContent = data.conversion.process_to_interview + '%';
+  document.getElementById('kpiToOffer').textContent = data.conversion.interview_to_offer + '%';
+
+  // Pipeline funnel (horizontal bar)
+  const funnelOrder = ['applied', 'in_process', 'interview_scheduled', 'offer', 'rejected'];
+  const funnelLabels = funnelOrder.map(k => STATUS_LABELS[k]);
+  const funnelValues = funnelOrder.map(k => data.status_counts[k] || 0);
+  const funnelBg = funnelOrder.map(k => STATUS_COLORS[k].bg);
+  const funnelBorder = funnelOrder.map(k => STATUS_COLORS[k].border);
+
+  new Chart(document.getElementById('funnelChart'), {
+    type: 'bar',
+    data: {
+      labels: funnelLabels,
+      datasets: [{
+        data: funnelValues,
+        backgroundColor: funnelBg,
+        borderColor: funnelBorder,
+        borderWidth: 2,
+        borderRadius: 6,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false }, ticks: { stepSize: 1 } },
+        y: { grid: { display: false } },
+      },
+    }
+  });
+
+  // Timeline chart
+  if (data.weekly.length > 0) {
+    new Chart(document.getElementById('timelineChart'), {
+      type: 'line',
+      data: {
+        labels: data.weekly.map(d => d.week),
+        datasets: [{
+          label: 'Applications',
+          data: data.weekly.map(d => d.count),
+          borderColor: '#6366f1',
+          backgroundColor: 'rgba(99,102,241,0.08)',
+          borderWidth: 2,
+          pointRadius: 4,
+          pointBackgroundColor: '#6366f1',
+          fill: true,
+          tension: 0.3,
+        }]
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { display: false } },
+          y: { grid: { color: '#f1f5f9' }, ticks: { stepSize: 1 } },
+        },
+      }
+    });
+  } else {
+    document.getElementById('timelineChart').parentElement.innerHTML +=
+      '<p class="text-muted small mt-2">No date data available yet.</p>';
+    document.getElementById('timelineChart').style.display = 'none';
+  }
+
+  // Skills chart
+  if (data.top_skills.length > 0) {
+    new Chart(document.getElementById('skillsChart'), {
+      type: 'bar',
+      data: {
+        labels: data.top_skills.map(d => d.skill),
+        datasets: [{
+          data: data.top_skills.map(d => d.count),
+          backgroundColor: 'rgba(99,102,241,0.15)',
+          borderColor: '#6366f1',
+          borderWidth: 2,
+          borderRadius: 5,
+        }]
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { display: false } },
+          y: { grid: { color: '#f1f5f9' }, ticks: { stepSize: 1 } },
+        },
+      }
+    });
+  } else {
+    document.getElementById('noSkills').classList.remove('d-none');
+    document.getElementById('skillsChart').style.display = 'none';
+  }
+}
+
+loadAnalytics();
+</script>
+{% endblock %}

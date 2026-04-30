@@ -1,5 +1,7 @@
 import os
-from datetime import date
+import json
+from collections import defaultdict
+from datetime import date, datetime
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -23,6 +25,15 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///job_tracker.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
+
+@app.template_filter('from_json')
+def from_json_filter(value):
+    if not value:
+        return []
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return []
 
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
@@ -66,35 +77,43 @@ with app.app_context():
                     applied_date=date(2026, 3, 10), status='interview_scheduled',
                     interview_date=date(2026, 4, 20),
                     notes='Passed phone screen, technical loop scheduled.',
+                    skills=json.dumps(['Python', 'Distributed Systems', 'System Design', 'Go']),
                     gmail_message_id='demo-1'),
                 JobApplication(user_id=_demo.id, company='Stripe', role='Backend Engineer',
                     applied_date=date(2026, 3, 15), status='in_process',
                     notes='Recruiter reached out for a call.',
+                    skills=json.dumps(['Go', 'Python', 'Payments APIs', 'PostgreSQL']),
                     gmail_message_id='demo-2'),
                 JobApplication(user_id=_demo.id, company='Notion', role='Full Stack Engineer',
                     applied_date=date(2026, 3, 18), status='applied',
                     notes='Applied via LinkedIn.',
+                    skills=json.dumps(['React', 'TypeScript', 'Node.js', 'PostgreSQL']),
                     gmail_message_id='demo-3'),
                 JobApplication(user_id=_demo.id, company='Figma', role='Product Engineer',
                     applied_date=date(2026, 2, 28), status='rejected',
                     notes='No feedback provided.',
+                    skills=json.dumps(['React', 'TypeScript', 'WebGL', 'CSS']),
                     gmail_message_id='demo-4'),
                 JobApplication(user_id=_demo.id, company='Linear', role='Software Engineer',
                     applied_date=date(2026, 2, 20), status='offer',
                     notes='Received offer, evaluating compensation.',
+                    skills=json.dumps(['TypeScript', 'React', 'Electron', 'GraphQL']),
                     gmail_message_id='demo-5'),
                 JobApplication(user_id=_demo.id, company='Vercel', role='DevEx Engineer',
                     applied_date=date(2026, 3, 22), status='applied',
                     notes='Applied through referral.',
+                    skills=json.dumps(['Node.js', 'TypeScript', 'CI/CD', 'Docker']),
                     gmail_message_id='demo-6'),
                 JobApplication(user_id=_demo.id, company='OpenAI', role='ML Engineer',
                     applied_date=date(2026, 3, 5), status='in_process',
                     notes='Technical assessment sent.',
+                    skills=json.dumps(['Python', 'PyTorch', 'Machine Learning', 'LLMs', 'CUDA']),
                     gmail_message_id='demo-7'),
                 JobApplication(user_id=_demo.id, company='Anthropic', role='Software Engineer',
                     applied_date=date(2026, 3, 25), status='interview_scheduled',
                     interview_date=date(2026, 4, 22),
                     notes='Two rounds scheduled: system design + coding.',
+                    skills=json.dumps(['Python', 'Distributed Systems', 'ML', 'System Design']),
                     gmail_message_id='demo-8'),
             ]
             db.session.add_all(_samples)
@@ -260,6 +279,68 @@ def agent_scan():
 
 
 # ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+@app.route('/analytics')
+@login_required
+def analytics():
+    return render_template('analytics.html')
+
+
+@app.route('/analytics/data')
+@login_required
+def analytics_data():
+    all_apps = JobApplication.query.filter_by(user_id=current_user.id).all()
+
+    # Status counts for funnel chart
+    status_counts = defaultdict(int)
+    for a in all_apps:
+        status_counts[a.status] += 1
+
+    # Applications per week (last 12 weeks)
+    weekly_counts = defaultdict(int)
+    for a in all_apps:
+        if a.applied_date:
+            # ISO week string e.g. "2026-W12"
+            week_key = a.applied_date.strftime('%Y-W%V')
+            weekly_counts[week_key] += 1
+    weekly_sorted = sorted(weekly_counts.items())
+
+    # Top skills frequency
+    skill_counts = defaultdict(int)
+    for a in all_apps:
+        if a.skills:
+            try:
+                for skill in json.loads(a.skills):
+                    skill_counts[skill.strip()] += 1
+            except (json.JSONDecodeError, TypeError):
+                pass
+    top_skills = sorted(skill_counts.items(), key=lambda x: x[1], reverse=True)[:15]
+
+    # Conversion rates
+    total = len(all_apps)
+    in_process_or_above = sum(1 for a in all_apps if a.status in ('in_process', 'interview_scheduled', 'offer'))
+    interview_or_above = sum(1 for a in all_apps if a.status in ('interview_scheduled', 'offer'))
+    offers = sum(1 for a in all_apps if a.status == 'offer')
+
+    def pct(n, d):
+        return round(n / d * 100, 1) if d else 0
+
+    return jsonify({
+        'status_counts': dict(status_counts),
+        'weekly': [{'week': w, 'count': c} for w, c in weekly_sorted],
+        'top_skills': [{'skill': s, 'count': c} for s, c in top_skills],
+        'conversion': {
+            'applied_to_process': pct(in_process_or_above, total),
+            'process_to_interview': pct(interview_or_above, in_process_or_above),
+            'interview_to_offer': pct(offers, interview_or_above),
+        },
+        'total': total,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Application CRUD
 # ---------------------------------------------------------------------------
 
@@ -274,6 +355,7 @@ def get_application(app_id):
         'status': rec.status,
         'interview_date': rec.interview_date.isoformat() if rec.interview_date else '',
         'notes': rec.notes or '',
+        'skills': json.loads(rec.skills) if rec.skills else [],
     })
 
 
@@ -287,7 +369,6 @@ def update_application(app_id):
 
     interview_date_str = request.form.get('interview_date', '').strip()
     if interview_date_str:
-        from datetime import datetime
         try:
             rec.interview_date = datetime.strptime(interview_date_str, '%Y-%m-%d').date()
         except ValueError:
@@ -295,7 +376,6 @@ def update_application(app_id):
     else:
         rec.interview_date = None
 
-    from datetime import datetime
     rec.updated_at = datetime.utcnow()
     db.session.commit()
     return jsonify({'success': True})
