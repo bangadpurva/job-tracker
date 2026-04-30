@@ -1,0 +1,32 @@
+# Environment
+.env
+.env.*
+
+# Google OAuth credentials
+credentials.json
+token.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Database
+*.db
+*.sqlite3
+
+# Claude Code internals
+.claude/projects/
+.claude/worktrees/
+
+# OS
+.DS_Store
+Thumbs.db
